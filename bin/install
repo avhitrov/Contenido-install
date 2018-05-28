@@ -1,0 +1,330 @@
+#!/usr/bin/perl
+
+##############################################################################
+# $HeadURL: svn+ssh://svn@vcs.dev.rambler.ru/cndinst/trunk/bin/install $
+# $Id: install 67 2013-12-23 12:31:56Z ahitrov $
+##############################################################################
+
+use strict;
+use File::Spec;
+use FindBin qw($RealBin);
+use Getopt::Long;
+use User::grent;
+use User::pwent;
+
+# defaults
+my $options = {
+	git_program     => (`which git` =~ /(.*)/)[0],
+	core_repository => ($ENV{CORE_REPOSITORY} || 'git@gitlab.rambler.ru:Contenido/core.git'),
+	server          => (`hostname` =~ /(.*)/)[0],
+	httpd_port      => ($ENV{HTTPD_PORT} || 0),
+	db_type         => 'R',
+	backups         => '/spool/backups',
+	crosslinks      => '/spool/crosslinks',
+	sessions        => '/spool/sessions',
+};
+
+my ($force, $help);
+GetOptions('force' => \$force, 'help' => \$help);
+
+if ($help) {
+	&usage;
+	exit;
+}
+
+my $yes_no   = { y => 'YES',  n => 'NO' };
+my $db_types = { N => 'NONE', R => 'REMOTE', S => 'SINGLE' };
+
+# begin
+my ($user, $group, $umask) = (getpwuid($>), getgrgid($)), sprintf('%03o', umask));
+my $destdir = $ENV{CNDINST_DESTDIR} || undef;
+(my $home = $user->dir) =~ s/\/+$//;
+
+load_conf($home, $options);
+
+START:
+while ($umask !~ /^\d0\d$/) {
+	my $a = user_prompt("Current umask ($umask) isn't group friendly. Are you sure?", default => 'n');
+	last if $a eq 'y';
+	next unless $a eq 'n';
+	print "Correct umask and try again!\n";
+	exit 0;
+}
+
+print sprintf (<<'EOM'
+Start installation as:
+    User:  %s [%d]
+    Group: %s [%d]
+    Home:  %s
+    Shell: %s
+    Umask: %s
+EOM
+, $user->name, $user->uid, $group->name, $group->gid, $home, $user->shell, $umask);
+
+while (1) {
+	my $a = lc(user_prompt('Is it correct?', default => 'y'));
+	last if $a eq 'y';
+	next unless $a eq 'n';
+	print "Bye, see you later!\n";
+	exit 0;
+}
+
+while (1) {
+	$destdir = user_prompt('Enter installation directory (absolute path)', default => $destdir ? $destdir : $home."/Contenido", ignore_force=>1);
+	next unless $destdir;
+
+	$destdir = File::Spec->canonpath($destdir);
+	$destdir =~ s/\/*$//;
+
+	if (-d $destdir) {
+		unless (is_dir_empty($destdir)) {
+			print "Directory exists and non-empty!\n";
+			undef $destdir;
+			next;
+		}
+		unless (-w $destdir) {
+			print "Directory exists, but you have no write permissions in it!\n";
+			undef $destdir;
+			next;
+		}
+	} else {
+		my @dirs = split /\/+/, $destdir;
+		my $pdir = '/'.join('/', @dirs[0..$#dirs-1]);
+		unless (-w $pdir) {
+			print "You have no permissions to create directory!\n";
+			undef $destdir;
+			next;
+		}
+	}
+	last;
+}
+
+while (1) {
+	my $a = lc(user_prompt('Which is git executable?', default => $options->{git_program}));
+	unless ($a && -x $a) {
+		print "There is no git executable!\n";
+		next;
+	}
+	$options->{git_program} = $a;
+	save_conf($home, $options);
+	last;
+}
+
+while (1) {
+	my $a = user_prompt('Enter server name', default => $options->{server});
+	next unless $a =~ /^[\w\-\+\.]+$/i;
+	$options->{server} = $a;
+	save_conf($home, $options);
+	last;
+}
+
+while (1) {
+	my $a = user_prompt('Enter HTTP port', default => $options->{httpd_port}, ignore_force=>1);
+	next unless $a =~ /^(\d)+$/i;
+	next if int($a)<1024 || int($a)>65535;
+	my %occupied = map {chomp; s/.*?(\d+)$/$1/; $_ => 1} `netstat -na | grep LISTEN | awk '{print \$4}'`;
+	if ($occupied{$a}) {
+		my $ao;
+		while (1) {
+			$ao = lc(user_prompt('Port seems busy. Are you sure?', default => 'n'));
+			last if $ao eq 'y';
+			next unless $ao eq 'n';
+			last;
+		}
+		next unless $ao eq 'y';
+	}
+	$options->{httpd_port} = $a;
+	save_conf($home, $options);
+	last;
+}
+
+while (1) {
+	my $a = user_prompt('Select database type: [N]ONE [R]EMOTE [S]INGLE', default => $options->{db_type}, ignore_force=>1);
+	next unless $a =~ /^[NRS]$/i;
+	$options->{db_type} = uc($a);
+	save_conf($home, $options);
+	last;
+}
+
+#while (1) {
+#	my $a = user_prompt('Enter backups directory', default => $options->{backups});
+#	next unless $a;
+#	$options->{backups} = $a;
+#	save_conf($home, $options);
+#	last;
+#}
+
+#while (1) {
+#	my $a = user_prompt('Enter crosslinks directory', default => $options->{crosslinks});
+#	next unless $a;
+#	$options->{crosslinks} = $a;
+#	save_conf($home, $options);
+#	last;
+#}
+
+#while (1) {
+#	my $a = user_prompt('Enter sessions directory', default => $options->{sessions});
+#	next unless $a;
+#	$options->{sessions} = $a;
+#	save_conf($home, $options);
+#	last;
+#}
+
+
+
+print <<EOM
+
+
+Summary:
+    Installation directory:  $destdir
+    Executable svn:          $options->{git_program}
+    Contenido repository:    $options->{core_repository}
+    Server name:             $options->{server}
+    HTTP port:               $options->{httpd_port}
+    Database type:           $db_types->{$options->{db_type}}
+    Backups directory:       $options->{backups}
+    Crosslinks directory:    $options->{crosslinks}
+    Sessions directory:      $options->{sessions}
+EOM
+;
+
+while (1) {
+	my $a = lc(user_prompt('Is it correct?', default => 'y'));
+	last if $a eq 'y';
+	next unless $a eq 'n';
+	print "\n\nRestarting config procedure\n\n\n";
+	goto START;
+}
+
+print "\nGreat, start installation!\n\n";
+
+print "Creating installation directory...\n";
+mkdir $destdir, 0775 or die "Can't mkdir: $destdir -  $!" unless -d $destdir;
+
+print "Creating installation layout...\n";
+system("cp -R $RealBin/../skel/* $destdir/") and die "Can't copy: skel - $!";
+system("find $destdir -depth -type d -name .svn -exec rm -Rf {} \\;") and die "Can't clean - $!";
+system("find $destdir -depth \\! -perm +20 -exec chmod g+w {} \\;")   and die "Can't chmod - $!";
+unlink "$destdir/config.mk.proto" or die $!;
+
+print "Checking out Contenido core...\n";
+system("$options->{git_program} clone $options->{core_repository} $destdir/src/core") and
+	die <<EOM
+	
+****************************************************************
+Fatal error occured, please resolve problem by hands.
+Don't forget about your installation directory: $destdir
+****************************************************************
+
+EOM
+;
+print "done\n";
+
+print "Creating installation config.mk...";
+my $rewrites = {
+	OWNER        => $user->name,
+	ROOT_DIR     => $destdir,
+	SERVER       => $options->{server},
+	HTTPD_PORT   => $options->{httpd_port},
+	DB_TYPE      => $db_types->{$options->{db_type}},
+	BACKUPS      => $options->{backups},
+	CROSSLINKS   => $options->{crosslinks},
+	SESSIONS     => $options->{sessions},
+};
+open PROTO, "< $RealBin/../skel/config.mk.proto" or die "Can't read: config.mk.proto - $!";
+open MK,    "> $destdir/config.mk"           or die "Can't create: config.mk - $!";
+print MK @{ rewrite([<PROTO>], $rewrites) };
+close MK;
+close PROTO;
+print "    done\n";
+
+print <<EOM
+
+*****************************************************************
+First step of Contenido installation finished.
+Now change dir to '$destdir'.
+Here, you can adjust some build options in 'config.mk' by hands.
+After all run 'make install' and hope it will be successfull :)
+*****************************************************************
+EOM
+;
+
+exit 0;
+
+
+### utils
+
+sub user_prompt {
+	my ($prompt, %opts) = @_;
+
+	print $prompt.(exists $opts{default} ? " [$opts{default}]" : "").": ";
+	#if ($force && $opts{default} && !$opts{ignore_force}) {
+	if ($force && $opts{default}) {
+		print "[forced default answer]\n";
+		#print "$opts{default} [forced answer]\n";
+		sleep 1;
+		return $opts{default};
+	}
+	my $answer = <>;
+	chomp $answer;
+	return $answer ? $answer : $opts{default};
+}
+
+sub is_dir_empty {
+	my $dir = shift;
+
+	opendir D, $dir;
+	while ($_ = readdir D) {
+		next if $_ eq '.' || $_ eq '..';
+		return 0;
+	}
+	closedir D;
+
+	return 1;
+}
+
+sub load_conf {
+	my ($home, $options) = @_;
+
+	return save_conf($home, $options) unless -f "$home/.cndinst/install.conf";
+
+	open CONF, "< $home/.cndinst/install.conf" or die "Can't read: $home/.cndinst/install.conf - $!";
+	while (<CONF>) {
+		chomp;
+		next if /^\s*#/; 
+		next unless /^\s*([^\s]+)\s*=\s*([^\s]+)/; 
+		next unless exists $options->{$1};
+		$options->{$1} = $2;
+	}
+	close CONF;
+	return $options;
+}
+
+sub save_conf {
+	my ($home, $options) = @_;
+	
+	mkdir "$home/.cndinst", 0775 or die "Can't mkdir: $home/.cndinst - $!" unless -d $home.'/.cndinst';
+
+	open CONF, "> $home/.cndinst/install.conf" or die "Can't create: $home/.cndinst/install.conf - $!";
+	print CONF "# Contenido installer config file\n\n";
+	printf CONF "%-20s = %s\n", $_, $options->{$_} for sort keys %{$options};
+	close CONF;
+}
+
+sub rewrite {
+	my ($lines, $rewrites) = @_;
+	s/\@([A-Z0-9\_]+)\@/$rewrites->{$1}/ms for @{$lines};
+	return $lines;
+}
+
+sub usage {
+	print <<EOM;
+Usage:
+    $FindBin::Script options
+
+Options:
+    -h, --help          Print this message
+    -f, --force         Force mode (automatically apply default answers
+                        on none-critical questions)
+EOM
+}

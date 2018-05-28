@@ -1,0 +1,72 @@
+##############################################################################
+#
+###############################################################################
+
+# Main
+OWNER =				@OWNER@
+ROOT_DIR =			@ROOT_DIR@
+CONTENIDO_VERSION =		7
+
+# HTTP
+HTTPD_PORT =			@HTTPD_PORT@
+SERVER =			@SERVER@
+HTTPD_SERVER =			${SERVER}:${HTTPD_PORT}
+SERVER_ADMIN =			${OWNER}
+
+# Database
+DB_TYPE ?=			@DB_TYPE@
+#PGSQL_LOGGING =		YES
+
+# Versioning
+VCS_TYPE =			git
+
+# External directories
+BACKUPS =			@BACKUPS@
+CROSSLINKS =			@CROSSLINKS@
+SESSIONS =			@SESSIONS@
+
+# Reloading
+STATIC_SOURCE_ENABLE =		YES
+
+# Error handling
+ERROR_MODE =			fatal
+
+# Debug & profiling
+# Default DEBUG_FORMAT = %d %C:%L (%P) [%l]: "%m"%n
+#   %d - date (format [mday/mon/year hour:min:sec])
+#   %P - current process ID
+#   %C - name of package caused this log
+#   %L - code line in %C
+#   %l - log level
+#   %m - log text
+#   %n - "\n"
+# Debug levels: [debug info notice warning error critical alert emergency]
+DEBUG =				NO
+DEBUG_FORMAT ?=
+DEBUG_MIN_LEVEL ?=
+DEBUG_MAX_LEVEL ?=
+DEBUG_STACK_TRACE =		NO
+DEBUG_SQL =			NO
+DEBUG_CORE =			NO
+DEBUG_WORKTIME =		NO
+PROFILING =			NO
+PROFILING_DBI =			NO
+
+# Tunable apache settings
+# (see src/core/config.mk for default values)
+#MIN_SPARE_SERVERS ?=
+#MAX_SPARE_SERVERS ?=
+#START_SERVERS ?=
+#MAX_CLIENTS ?=
+#MAX_REQUESTS_PER_CHILD ?=
+
+# Development ('/src' instead '/usr')
+# also flag for use test database/memcached etc
+# also can be accessed via $state->is_dev_server or $state->development
+DEVELOPMENT =			NO
+
+# Default repository
+SVN_REPOSITORY ?=		http://svn.dev.rambler.ru
+
+# Current project
+PROJECT ?=
